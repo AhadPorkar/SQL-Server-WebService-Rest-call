@@ -521,7 +521,7 @@ END;
 
 ---
 
-## ⚡ Performance Optimization Tips
+##  Performance Optimization Tips
 
 ### 1. Caching
 
