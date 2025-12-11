@@ -677,7 +677,7 @@ EXEC sp_invoke_external_rest_endpoint
 
 ---
 
-### 🥈 TIER 2 (GOOD CHOICES)
+###  TIER 2 (GOOD CHOICES)
 
 #### 3. SQL CLR (C#)
 - For high-performance scenarios
@@ -694,18 +694,18 @@ EXEC sp_invoke_external_rest_endpoint
 ###  TIER 3 (USE WITH CAUTION)
 
 #### 5. PowerShell via `xp_cmdshell`
-- ⚠️ Quick prototyping only
-- ⚠️ Disable immediately after use
-- ⚠️ Not for production if alternatives exist
+-  Quick prototyping only
+-  Disable immediately after use
+-  Not for production if alternatives exist
 
 ---
 
 ###  TIER 4 (AVOID IF POSSIBLE)
 
 #### 6. OLE Automation
-- ❌ Legacy systems only
-- ❌ Plan migration ASAP
-- ❌ High security risk
+-  Legacy systems only
+-  Plan migration ASAP
+-  High security risk
 
 ---
 
