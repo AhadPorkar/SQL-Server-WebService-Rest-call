@@ -40,7 +40,7 @@
 
 ---
 
-## 🔍 Detailed Method Analysis
+##  Detailed Method Analysis
 
 ### 1. OLE Automation (`sp_OACreate`, `sp_OAMethod`)
 
