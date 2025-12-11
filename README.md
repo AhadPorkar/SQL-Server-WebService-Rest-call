@@ -86,7 +86,7 @@
 - Can interact with file system
 - Access to full PowerShell ecosystem
 
-#### ❌ Cons
+####  Cons
 - Requires `xp_cmdshell` (major security concern)
 - Performance overhead (new process per call)
 - Output parsing can be complex
