@@ -1,264 +1,317 @@
-/*==============================================================================
-  METHODS FOR CALLING WEB SERVICES FROM SQL SERVER
-==============================================================================*/
+#  Complete Guide: Calling Web Services from SQL Server
 
-/*******************************************************************************
-  METHOD COMPARISON MATRIX
-*******************************************************************************/
+> A comprehensive comparison of all methods for making REST API calls from SQL Server, from legacy approaches to SQL Server 2025's native capabilities.
 
-/*
-┌──────────────────────┬──────────────┬────────────┬──────────────┬──────────────┬─────────────────┐
-│ Method               │ SQL Version  │ Setup      │ Performance  │ Security     │ Recommended     │
-│                      │ Required     │ Complexity │              │ Risk         │ Use Case        │
-├──────────────────────┼──────────────┼────────────┼──────────────┼──────────────┼─────────────────┤
-│ OLE Automation       │ 2005+        │ Low        │ Poor         │ High         │ Legacy only     │
-│ (sp_OACreate)        │              │            │              │              │                 │
-├──────────────────────┼──────────────┼────────────┼──────────────┼──────────────┼─────────────────┤
-│ PowerShell           │ 2008+        │ Medium     │ Fair         │ Medium       │ Scheduled jobs  │
-│ (xp_cmdshell)        │              │            │              │              │ Complex logic   │
-├──────────────────────┼──────────────┼────────────┼──────────────┼──────────────┼─────────────────┤
-│ PowerShell           │ 2008+        │ Medium     │ Fair         │ Low          │ Recurring tasks │
-│ (SQL Agent)          │              │            │              │              │ ETL workflows   │
-├──────────────────────┼──────────────┼────────────┼──────────────┼──────────────┼─────────────────┤
-│ SQL CLR (C#)         │ 2005+        │ High       │ Excellent    │ Medium       │ High volume     │
-│                      │ (Not Azure)  │            │              │              │ Complex logic   │
-├──────────────────────┼──────────────┼────────────┼──────────────┼──────────────┼─────────────────┤
-│ External C# App      │ Any          │ High       │ Good         │ High         │ Microservices   │
-│                      │              │            │              │              │ Decoupled arch  │
-├──────────────────────┼──────────────┼────────────┼──────────────┼──────────────┼─────────────────┤
-│ sp_invoke_external_  │ 2025+        │ Very Low   │ Excellent    │ Low          │ ** BEST CHOICE  │
-│ rest_endpoint        │ (Azure SQL)  │            │              │              │ ** NEW PROJECTS │
-└──────────────────────┴──────────────┴────────────┴──────────────┴──────────────┴─────────────────┘
-*/
+[![SQL Server](https://img.shields.io/badge/SQL%20Server-2005--2025-CC2927?logo=microsoftsqlserver)](https://www.microsoft.com/sql-server)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-/*------------------------------------------------------------------------------
-  METHOD 1: OLE AUTOMATION (sp_OACreate, sp_OAMethod)
-------------------------------------------------------------------------------*/
--- ✓ PROS:
---   • Available since SQL Server 2005
---   • No external dependencies
---   • Works on older systems
---   • Simple for basic requests
+---
 
--- ✗ CONS:
---   • Deprecated technology
---   • Poor error handling
---   • Verbose syntax
---   • Limited SSL/TLS support
---   • High security risk (requires sysadmin to enable)
---   • Poor performance
---   • Memory leaks if not cleaned up properly
---   • Limited to COM objects
+##  Table of Contents
 
---   PERFORMANCE: ★☆☆☆☆ (1/5)
---   SECURITY: ★☆☆☆☆ (1/5)
---   EASE OF USE: ★★☆☆☆ (2/5)
+- [Method Comparison Matrix](#-method-comparison-matrix)
+- [Detailed Method Analysis](#-detailed-method-analysis)
+  - [1. OLE Automation](#1-ole-automation-sp_oacreate-sp_oamethod)
+  - [2. PowerShell via xp_cmdshell](#2-powershell-via-xp_cmdshell)
+  - [3. PowerShell via SQL Agent](#3-powershell-via-sql-agent)
+  - [4. SQL CLR (C#)](#4-sql-clr-c-net-assembly)
+  - [5. External C# Application](#5-external-c-application)
+  - [6. SQL Server 2025 Native](#6-sp_invoke_external_rest_endpoint-sql-server-2025)
+- [Decision Tree](#-decision-tree)
+- [Real-World Scenarios](#-real-world-scenarios)
+- [Security Best Practices](#-security-best-practices)
+- [Performance Optimization](#-performance-optimization-tips)
+- [Migration Guide](#-migration-guide)
+- [Final Recommendations](#-summary-and-final-recommendations)
 
---   USE WHEN:
---   • Maintaining legacy systems (SQL 2000-2008)
---   • No other options available
---   • Upgrading is not feasible
+---
 
---   EXAMPLE USE CASE:
---   • Old application on SQL Server 2005 that cannot be upgraded
---   • Simple one-time data migration
+## 📊 Method Comparison Matrix
 
-/*------------------------------------------------------------------------------
-  METHOD 2: POWERSHELL VIA xp_cmdshell
-------------------------------------------------------------------------------*/
--- ✓ PROS:
---   • Very flexible and powerful
---   • Native HTTP support
---   • Can handle complex scenarios
---   • Good error handling
---   • Can interact with file system
---   • Access to full PowerShell ecosystem
+| Method | SQL Version | Setup Complexity | Performance | Security Risk | Recommended Use Case |
+|--------|-------------|------------------|-------------|---------------|---------------------|
+| **OLE Automation**<br/>`sp_OACreate` | 2005+ | Low | ⭐ Poor |  High | Legacy only |
+| **PowerShell**<br/>`xp_cmdshell` | 2008+ | Medium | ⭐⭐ Fair |  Medium | Scheduled jobs<br/>Complex logic |
+| **PowerShell**<br/>`SQL Agent` | 2008+ | Medium | ⭐⭐⭐ Fair |  Low | Recurring tasks<br/>ETL workflows |
+| **SQL CLR**<br/>`C# Assembly` | 2005+<br/>(Not Azure) | High | ⭐⭐⭐⭐⭐ Excellent |  Medium | High volume<br/>Complex logic |
+| **External C# App** | Any | High | ⭐⭐⭐⭐ Good |  Medium | Microservices<br/>Decoupled arch |
+| **sp_invoke_external_<br/>rest_endpoint** | 2025+<br/>(Azure SQL) | Very Low | ⭐⭐⭐⭐⭐ Excellent |  Low | ** BEST CHOICE**<br/>**NEW PROJECTS** |
 
--- ✗ CONS:
---   • Requires xp_cmdshell (major security concern)
---   • Performance overhead (new process per call)
---   • Output parsing can be complex
---   • Requires proper execution policy
---   • String escaping challenges
+---
 
---   PERFORMANCE: ★★☆☆☆ (2/5)
---   SECURITY: ★★☆☆☆ (2/5)
---   EASE OF USE: ★★★☆☆ (3/5)
+## 🔍 Detailed Method Analysis
 
---   USE WHEN:
---   • Need complex pre/post processing
---   • Interacting with multiple systems
---   • File operations required
---   • Quick prototyping
---   • Already using xp_cmdshell for other tasks
+### 1. OLE Automation (`sp_OACreate`, `sp_OAMethod`)
 
---   EXAMPLE USE CASE:
---   • Download file from API, process it, upload to FTP
---   • Complex authentication flows
---   • Calling APIs that require certificate authentication
+####  Pros
+- Available since SQL Server 2005
+- No external dependencies
+- Works on older systems
+- Simple for basic requests
 
-/*------------------------------------------------------------------------------
-  METHOD 3: POWERSHELL VIA SQL AGENT
-------------------------------------------------------------------------------*/
--- ✓ PROS:
---   • No xp_cmdshell required
---   • Better security model
---   • Built-in scheduling
---   • Job history and logging
---   • Error notifications
---   • Retry logic built-in
+####  Cons
+- Deprecated technology
+- Poor error handling
+- Verbose syntax
+- Limited SSL/TLS support
+- High security risk (requires sysadmin to enable)
+- Poor performance
+- Memory leaks if not cleaned up properly
+- Limited to COM objects
 
--- ✗ CONS:
---   • Cannot be called on-demand from T-SQL
---   • Requires SQL Agent (not available in Express Edition)
---   • Setup more complex
---   • Debugging is harder
+####  Ratings
+- **Performance:** ⭐☆☆☆☆ (1/5)
+- **Security:** ⭐☆☆☆☆ (1/5)
+- **Ease of Use:** ⭐⭐☆☆☆ (2/5)
 
---   PERFORMANCE: ★★★☆☆ (3/5)
---   SECURITY: ★★★★☆ (4/5)
---   EASE OF USE: ★★★☆☆ (3/5)
+####  Use When
+- Maintaining legacy systems (SQL 2000-2008)
+- No other options available
+- Upgrading is not feasible
 
---   USE WHEN:
---   • Scheduled/recurring API calls
---   • ETL processes
---   • Batch operations
---   • Night-time data synchronization
---   • Don't need real-time responses
+####  Example Use Case
+- Old application on SQL Server 2005 that cannot be upgraded
+- Simple one-time data migration
 
---   EXAMPLE USE CASE:
---   • Nightly sync of product data from external API
---   • Hourly weather data updates
---   • Daily report generation from multiple API sources
+---
 
-/*------------------------------------------------------------------------------
-  METHOD 4: SQL CLR (C# .NET Assembly)
-------------------------------------------------------------------------------*/
--- ✓ PROS:
---   • Excellent performance (in-process)
---   • Full .NET Framework capabilities
---   • Type-safe and strongly typed
---   • Can create table-valued functions
---   • Reusable across databases
---   • Complex logic support
---   • Binary data handling
---   • Can use any NuGet package
+### 2. PowerShell via `xp_cmdshell`
 
--- ✗ CONS:
---   • Complex setup (compile, deploy, register)
---   • Requires CLR enabled (security review needed)
---   • Not fully supported in Azure SQL Database
---   • Debugging is challenging
---   • Version management overhead
---   • Requires .NET development skills
---   • Assembly signing required for production
+####  Pros
+- Very flexible and powerful
+- Native HTTP support
+- Can handle complex scenarios
+- Good error handling
+- Can interact with file system
+- Access to full PowerShell ecosystem
 
---   PERFORMANCE: ★★★★★ (5/5)
---   SECURITY: ★★★☆☆ (3/5)
---   EASE OF USE: ★★☆☆☆ (2/5)
+#### ❌ Cons
+- Requires `xp_cmdshell` (major security concern)
+- Performance overhead (new process per call)
+- Output parsing can be complex
+- Requires proper execution policy
+- String escaping challenges
 
---   USE WHEN:
---   • High-volume API calls (thousands per minute)
---   • Complex data transformations
---   • Need to reuse functions across multiple databases
---   • Binary file processing
---   • Custom authentication mechanisms
---   • On-premises with full control
+####  Ratings
+- **Performance:** ⭐⭐☆☆☆ (2/5)
+- **Security:** ⭐⭐☆☆☆ (2/5)
+- **Ease of Use:** ⭐⭐⭐☆☆ (3/5)
 
---   EXAMPLE USE CASE:
---   • Real-time stock price updates (high frequency)
---   • Image processing from external API
---   • Complex JSON parsing and transformation
---   • Custom encryption/decryption before API calls
+####  Use When
+- Need complex pre/post processing
+- Interacting with multiple systems
+- File operations required
+- Quick prototyping
+- Already using `xp_cmdshell` for other tasks
 
-/*------------------------------------------------------------------------------
-  METHOD 5: EXTERNAL C# APPLICATION
-------------------------------------------------------------------------------*/
--- ✓ PROS:
---   • Complete separation of concerns
---   • Independent deployment
---   • Easier debugging and testing
---   • Can use latest .NET versions
---   • Full async/await support
---   • Better logging infrastructure
---   • Can be containerized
+####  Example Use Case
+- Download file from API, process it, upload to FTP
+- Complex authentication flows
+- Calling APIs that require certificate authentication
 
--- ✗ CONS:
---   • Requires external application management
---   • More complex architecture
---   • Network latency between app and SQL
---   • Requires xp_cmdshell or SQL Agent to trigger
---   • Additional infrastructure
+---
 
---   PERFORMANCE: ★★★★☆ (4/5)
---   SECURITY: ★★☆☆☆ (2/5) [if using xp_cmdshell]
---              ★★★★☆ (4/5) [if proper service]
---   EASE OF USE: ★★★☆☆ (3/5)
+### 3. PowerShell via SQL Agent
 
---   USE WHEN:
---   • Building microservices architecture
---   • Need modern .NET features (.NET 6+)
---   • Want independent scaling
---   • Require extensive logging/monitoring
---   • Complex business logic outside SQL
---   • Multiple systems need same API integration
+####  Pros
+- No `xp_cmdshell` required
+- Better security model
+- Built-in scheduling
+- Job history and logging
+- Error notifications
+- Retry logic built-in
 
---   EXAMPLE USE CASE:
---   • Microservice handling all external API integrations
---   • Message queue consumer that updates SQL
---   • RESTful API gateway for SQL Server
---   • Event-driven architecture with SQL as data store
+####  Cons
+- Cannot be called on-demand from T-SQL
+- Requires SQL Agent (not available in Express Edition)
+- Setup more complex
+- Debugging is harder
 
-/*------------------------------------------------------------------------------
-  METHOD 6: sp_invoke_external_rest_endpoint (SQL Server 2025)
-------------------------------------------------------------------------------*/
--- ✓ PROS:
---   • Native, built-in support
---   • Clean, simple syntax
---   • Secure credential management
---   • Built-in retry logic
---   • Excellent performance
---   • All HTTP methods supported
---   • Timeout configuration
---   • Managed Identity support
---   • No external dependencies
---   • Full JSON integration
---   • Works with HTTPS only (enforced security)
+####  Ratings
+- **Performance:** ⭐⭐⭐☆☆ (3/5)
+- **Security:** ⭐⭐⭐⭐☆ (4/5)
+- **Ease of Use:** ⭐⭐⭐☆☆ (3/5)
 
--- ✗ CONS:
---   • Requires SQL Server 2025+ (or Azure SQL)
---   • HTTPS only (no HTTP)
---   • Must be explicitly enabled
---   • Response size limited to 100MB
---   • Rate limiting considerations
+####  Use When
+- Scheduled/recurring API calls
+- ETL processes
+- Batch operations
+- Night-time data synchronization
+- Don't need real-time responses
 
---   PERFORMANCE: ★★★★★ (5/5)
---   SECURITY: ★★★★★ (5/5)
---   EASE OF USE: ★★★★★ (5/5)
+####  Example Use Case
+- Nightly sync of product data from external API
+- Hourly weather data updates
+- Daily report generation from multiple API sources
 
---   USE WHEN:
---   • SQL Server 2025 or Azure SQL available
---   • ANY REST API integration needed
---   • Starting new projects
---   • Modernizing existing solutions
---   • Need enterprise-grade security
+---
 
---   EXAMPLE USE CASE:
---   • Any REST API integration in SQL Server 2025
---   • Real-time data enrichment
---   • Calling Azure services from SQL
---   • Webhook handling
---   • Integration with third-party services
+### 4. SQL CLR (C# .NET Assembly)
 
-/*******************************************************************************
-  DECISION TREE
-*******************************************************************************/
+####  Pros
+- Excellent performance (in-process)
+- Full .NET Framework capabilities
+- Type-safe and strongly typed
+- Can create table-valued functions
+- Reusable across databases
+- Complex logic support
+- Binary data handling
+- Can use any NuGet package
 
-/*
+####  Cons
+- Complex setup (compile, deploy, register)
+- Requires CLR enabled (security review needed)
+- Not fully supported in Azure SQL Database
+- Debugging is challenging
+- Version management overhead
+- Requires .NET development skills
+- Assembly signing required for production
+
+####  Ratings
+- **Performance:** ⭐⭐⭐⭐⭐ (5/5)
+- **Security:** ⭐⭐⭐☆☆ (3/5)
+- **Ease of Use:** ⭐⭐☆☆☆ (2/5)
+
+####  Use When
+- High-volume API calls (thousands per minute)
+- Complex data transformations
+- Need to reuse functions across multiple databases
+- Binary file processing
+- Custom authentication mechanisms
+- On-premises with full control
+
+####  Example Use Case
+- Real-time stock price updates (high frequency)
+- Image processing from external API
+- Complex JSON parsing and transformation
+- Custom encryption/decryption before API calls
+
+---
+
+### 5. External C# Application
+
+####  Pros
+- Complete separation of concerns
+- Independent deployment
+- Easier debugging and testing
+- Can use latest .NET versions
+- Full async/await support
+- Better logging infrastructure
+- Can be containerized
+
+####  Cons
+- Requires external application management
+- More complex architecture
+- Network latency between app and SQL
+- Requires `xp_cmdshell` or SQL Agent to trigger
+- Additional infrastructure
+
+####  Ratings
+- **Performance:** ⭐⭐⭐⭐☆ (4/5)
+- **Security:** ⭐⭐☆☆☆ (2/5) *[if using xp_cmdshell]* / ⭐⭐⭐⭐☆ (4/5) *[if proper service]*
+- **Ease of Use:** ⭐⭐⭐☆☆ (3/5)
+
+####  Use When
+- Building microservices architecture
+- Need modern .NET features (.NET 6+)
+- Want independent scaling
+- Require extensive logging/monitoring
+- Complex business logic outside SQL
+- Multiple systems need same API integration
+
+####  Example Use Case
+- Microservice handling all external API integrations
+- Message queue consumer that updates SQL
+- RESTful API gateway for SQL Server
+- Event-driven architecture with SQL as data store
+
+---
+
+### 6. `sp_invoke_external_rest_endpoint` (SQL Server 2025)
+
+####  Pros
+- Native, built-in support
+- Clean, simple syntax
+- Secure credential management
+- Built-in retry logic
+- Excellent performance
+- All HTTP methods supported (GET, POST, PUT, PATCH, DELETE, HEAD)
+- Timeout configuration
+- Managed Identity support
+- No external dependencies
+- Full JSON integration
+- Works with HTTPS only (enforced security)
+
+####  Cons
+- Requires SQL Server 2025+ (or Azure SQL)
+- HTTPS only (no HTTP)
+- Must be explicitly enabled
+- Response size limited to 100MB
+- Rate limiting considerations
+
+####  Ratings
+- **Performance:** ⭐⭐⭐⭐⭐ (5/5)
+- **Security:** ⭐⭐⭐⭐⭐ (5/5)
+- **Ease of Use:** ⭐⭐⭐⭐⭐ (5/5)
+
+####  Use When
+- SQL Server 2025 or Azure SQL available
+- ANY REST API integration needed
+- Starting new projects
+- Modernizing existing solutions
+- Need enterprise-grade security
+
+####  Example Use Case
+- Any REST API integration in SQL Server 2025
+- Real-time data enrichment
+- Calling Azure services from SQL
+- Webhook handling
+- Integration with third-party services
+
+####  Example Code
+
+```sql
+-- Enable the feature
+EXEC sp_configure 'external rest endpoint enabled', 1;
+RECONFIGURE WITH OVERRIDE;
+
+-- Simple GET request
+DECLARE @response NVARCHAR(MAX);
+EXEC sp_invoke_external_rest_endpoint
+    @url = 'https://api.example.com/data',
+    @method = 'GET',
+    @response = @response OUTPUT;
+
+-- POST request with authentication
+DECLARE @response NVARCHAR(MAX);
+DECLARE @payload NVARCHAR(MAX) = '{"name":"test","value":"123"}';
+
+EXEC sp_invoke_external_rest_endpoint
+    @url = 'https://api.example.com/data',
+    @method = 'POST',
+    @payload = @payload,
+    @credential = 'MyAPICredential',
+    @timeout = 30,
+    @retry_count = 3,
+    @response = @response OUTPUT;
+
+-- Parse JSON response
+SELECT 
+    JSON_VALUE(@response, '$.response.status.http.code') AS StatusCode,
+    JSON_QUERY(@response, '$.result') AS ResponseBody;
+```
+
+---
+
+##  Decision Tree
+
+```
 START: Need to call web service from SQL Server?
 │
 ├─ SQL Server 2025+ or Azure SQL available?
 │  │
-│  ├─ YES → Use sp_invoke_external_rest_endpoint ✓ (BEST CHOICE)
+│  ├─ YES → Use sp_invoke_external_rest_endpoint  (BEST CHOICE)
 │  │
 │  └─ NO → Continue to next question
 │
@@ -273,7 +326,7 @@ START: Need to call web service from SQL Server?
 │
 ├─ Need scheduled/recurring calls?
 │  │
-│  ├─ YES → Use SQL Agent with PowerShell ✓
+│  ├─ YES → Use SQL Agent with PowerShell 
 │  │
 │  └─ NO → Continue to next question
 │
@@ -286,7 +339,7 @@ START: Need to call web service from SQL Server?
 │
 ├─ Building modern, scalable architecture?
 │  │
-│  ├─ YES → External C# application/microservice ✓
+│  ├─ YES → External C# application/microservice 
 │  │
 │  └─ NO → Continue to next question
 │
@@ -295,110 +348,110 @@ START: Need to call web service from SQL Server?
    • Cannot upgrade
    • Simple, infrequent calls
    → Use OLE Automation (not recommended)
-*/
+```
 
-/*******************************************************************************
-  REAL-WORLD SCENARIOS AND RECOMMENDATIONS
-*******************************************************************************/
+---
 
--- SCENARIO 1: E-commerce Order Processing
--- ─────────────────────────────────────────
--- Need: Call shipping provider API when order is placed
--- Volume: 100-500 calls per day
--- RECOMMENDED: SQL Server 2025: sp_invoke_external_rest_endpoint
---              Alternative: SQL CLR if on older version
+##  Real-World Scenarios
 
--- SCENARIO 2: Weather Data Integration
--- ─────────────────────────────────────
--- Need: Fetch weather data every hour for 50 locations
--- Volume: 1,200 calls per day
--- RECOMMENDED: SQL Agent with PowerShell
+### Scenario 1: E-commerce Order Processing
+**Need:** Call shipping provider API when order is placed  
+**Volume:** 100-500 calls per day  
+** Recommended:** SQL Server 2025: `sp_invoke_external_rest_endpoint`  
+**Alternative:** SQL CLR if on older version
 
--- SCENARIO 3: Real-time Stock Prices
--- ───────────────────────────────────
--- Need: Update stock prices continuously
--- Volume: 10,000+ calls per minute
--- RECOMMENDED: SQL CLR (C#) with async operations
---              OR: External C# microservice with SQL updates
+### Scenario 2: Weather Data Integration
+**Need:** Fetch weather data every hour for 50 locations  
+**Volume:** 1,200 calls per day  
+** Recommended:** SQL Agent with PowerShell
 
--- SCENARIO 4: Payment Gateway Integration
--- ────────────────────────────────────────
--- Need: Process payments when invoice is finalized
--- Volume: 50-200 calls per day
--- Security: Critical - PCI compliance required
--- RECOMMENDED: External C# application with proper security
---              SQL Server 2025 with Managed Identity second choice
+### Scenario 3: Real-time Stock Prices
+**Need:** Update stock prices continuously  
+**Volume:** 10,000+ calls per minute  
+** Recommended:** SQL CLR (C#) with async operations  
+**Alternative:** External C# microservice with SQL updates
 
--- SCENARIO 5: Geocoding Addresses
--- ────────────────────────────────
--- Need: Convert addresses to lat/long coordinates
--- Volume: Batch processing, 10,000 addresses monthly
--- RECOMMENDED: SQL Agent PowerShell job (nightly batch)
---              OR: SQL Server 2025 triggered by table changes
+### Scenario 4: Payment Gateway Integration
+**Need:** Process payments when invoice is finalized  
+**Volume:** 50-200 calls per day  
+**Security:** Critical - PCI compliance required  
+** Recommended:** External C# application with proper security  
+**Alternative:** SQL Server 2025 with Managed Identity
 
--- SCENARIO 6: Social Media Integration
--- ─────────────────────────────────────
--- Need: Post updates to Twitter/LinkedIn when product launches
--- Volume: 10-20 calls per month
--- RECOMMENDED: PowerShell via xp_cmdshell (simplicity over security for low volume)
---              OR: SQL Server 2025 if available
+### Scenario 5: Geocoding Addresses
+**Need:** Convert addresses to lat/long coordinates  
+**Volume:** Batch processing, 10,000 addresses monthly  
+** Recommended:** SQL Agent PowerShell job (nightly batch)  
+**Alternative:** SQL Server 2025 triggered by table changes
 
--- SCENARIO 7: AI/ML Model Inference
--- ──────────────────────────────────
--- Need: Send data to Azure OpenAI or custom ML endpoint
--- Volume: Variable, potentially high
--- RECOMMENDED: SQL Server 2025 (built for this scenario!)
---              Alternative: SQL CLR for on-premises ML models
+### Scenario 6: Social Media Integration
+**Need:** Post updates to Twitter/LinkedIn when product launches  
+**Volume:** 10-20 calls per month  
+** Recommended:** PowerShell via `xp_cmdshell` (simplicity over security for low volume)  
+**Alternative:** SQL Server 2025 if available
 
--- SCENARIO 8: ETL from External REST API
--- ───────────────────────────────────────
--- Need: Daily extraction of data from partner API
--- Volume: Once per day, thousands of records
--- RECOMMENDED: SQL Agent PowerShell job with robust error handling
+### Scenario 7: AI/ML Model Inference
+**Need:** Send data to Azure OpenAI or custom ML endpoint  
+**Volume:** Variable, potentially high  
+** Recommended:** SQL Server 2025 (built for this scenario!)  
+**Alternative:** SQL CLR for on-premises ML models
 
-/*******************************************************************************
-  SECURITY BEST PRACTICES (ALL METHODS)
-*******************************************************************************/
+### Scenario 8: ETL from External REST API
+**Need:** Daily extraction of data from partner API  
+**Volume:** Once per day, thousands of records  
+** Recommended:** SQL Agent PowerShell job with robust error handling
 
--- 1. CREDENTIAL MANAGEMENT
--- ─────────────────────────
--- ✓ DO:
---   • Store API keys in database credentials (SQL 2025)
---   • Use Windows Credential Manager for PowerShell
---   • Implement key rotation policies
---   • Use Managed Identity when possible (Azure)
---   • Encrypt stored credentials
+---
 
--- ✗ DON'T:
---   • Hard-code API keys in scripts
---   • Store credentials in plain text
---   • Share credentials across environments
---   • Log credential values
+## 🔒 Security Best Practices
 
--- Example: Secure credential storage
+### 1. Credential Management
+
+####  DO:
+- Store API keys in database credentials (SQL 2025)
+- Use Windows Credential Manager for PowerShell
+- Implement key rotation policies
+- Use Managed Identity when possible (Azure)
+- Encrypt stored credentials
+
+####  DON'T:
+- Hard-code API keys in scripts
+- Store credentials in plain text
+- Share credentials across environments
+- Log credential values
+
+#### Example: Secure Credential Storage
+
+```sql
+-- Create master key
 CREATE MASTER KEY ENCRYPTION BY PASSWORD = 'YourStrongPassword!123';
 GO
 
+-- Create database scoped credential
 CREATE DATABASE SCOPED CREDENTIAL APICredential
 WITH IDENTITY = 'HTTPEndpointHeaders',
 SECRET = '{"Authorization": "Bearer YOUR_TOKEN"}';
 GO
+```
 
--- 2. LEAST PRIVILEGE PRINCIPLE
--- ─────────────────────────────
--- Grant only necessary permissions:
+### 2. Least Privilege Principle
+
+```sql
+-- Grant only necessary permissions
 GRANT EXECUTE ANY EXTERNAL ENDPOINT TO [APICallerUser];
+
 -- Don't grant sysadmin unless absolutely necessary
+```
 
--- 3. NETWORK SECURITY
--- ────────────────────
--- ✓ Always use HTTPS (TLS 1.2+)
--- ✓ Implement firewall rules
--- ✓ Use VPN for sensitive data
--- ✓ Whitelist IP addresses when possible
+### 3. Network Security
+-  Always use HTTPS (TLS 1.2+)
+-  Implement firewall rules
+-  Use VPN for sensitive data
+-  Whitelist IP addresses when possible
 
--- 4. INPUT VALIDATION
--- ───────────────────
+### 4. Input Validation
+
+```sql
 CREATE OR ALTER PROCEDURE dbo.CallAPISecure
     @url NVARCHAR(MAX)
 AS
@@ -420,10 +473,12 @@ BEGIN
     
     -- Proceed with API call...
 END;
-GO
+```
 
--- 5. AUDITING AND LOGGING
--- ────────────────────────
+### 5. Auditing and Logging
+
+```sql
+-- Create audit log table
 CREATE TABLE dbo.APICallAuditLog (
     LogID INT IDENTITY(1,1) PRIMARY KEY,
     CalledBy NVARCHAR(128) DEFAULT SUSER_SNAME(),
@@ -434,7 +489,6 @@ CREATE TABLE dbo.APICallAuditLog (
     CalledAt DATETIME2 DEFAULT GETDATE(),
     ErrorMessage NVARCHAR(MAX)
 );
-GO
 
 -- Log every API call
 CREATE OR ALTER PROCEDURE dbo.CallAPIWithAudit
@@ -446,7 +500,6 @@ BEGIN
     DECLARE @error NVARCHAR(MAX);
     
     BEGIN TRY
-        -- Make API call (SQL 2025 example)
         DECLARE @response NVARCHAR(MAX);
         EXEC sp_invoke_external_rest_endpoint
             @url = @url,
@@ -464,22 +517,24 @@ BEGIN
     INSERT INTO dbo.APICallAuditLog (APIUrl, Method, StatusCode, Success, ErrorMessage)
     VALUES (@url, 'GET', @statusCode, @success, @error);
 END;
-GO
+```
 
-/*******************************************************************************
-  PERFORMANCE OPTIMIZATION TIPS
-*******************************************************************************/
+---
 
--- 1. CACHING
--- ──────────
+## ⚡ Performance Optimization Tips
+
+### 1. Caching
+
+```sql
+-- Create cache table
 CREATE TABLE dbo.APIResponseCache (
     CacheKey NVARCHAR(500) PRIMARY KEY,
     Response NVARCHAR(MAX),
     CachedAt DATETIME2 DEFAULT GETDATE(),
     ExpiresAt DATETIME2
 );
-GO
 
+-- Procedure with caching
 CREATE OR ALTER PROCEDURE dbo.CallAPIWithCache
     @url NVARCHAR(MAX),
     @cacheDurationMinutes INT = 60
@@ -495,7 +550,6 @@ BEGIN
     
     IF @cachedResponse IS NOT NULL
     BEGIN
-        -- Return cached response
         SELECT @cachedResponse AS Response, 'CACHED' AS Source;
         RETURN;
     END
@@ -518,11 +572,12 @@ BEGIN
     
     SELECT @response AS Response, 'FRESH' AS Source;
 END;
-GO
+```
 
--- 2. BATCHING
--- ───────────
--- Instead of calling API for each row, batch requests:
+### 2. Batching
+
+```sql
+-- Instead of calling API for each row, batch requests
 CREATE OR ALTER PROCEDURE dbo.BatchAPICall
 AS
 BEGIN
@@ -542,114 +597,129 @@ BEGIN
         @response = @response OUTPUT;
     
     -- Process batch response
-    -- [Update individual items based on response]
 END;
-GO
+```
 
--- 3. ASYNC PATTERN (For high volume)
--- ───────────────────────────────────
--- Queue API calls, process asynchronously:
+### 3. Async Pattern (For High Volume)
+
+```sql
+-- Queue API calls, process asynchronously
 CREATE TABLE dbo.APICallQueue (
     QueueID INT IDENTITY(1,1) PRIMARY KEY,
     APIUrl NVARCHAR(500),
     Payload NVARCHAR(MAX),
-    Status NVARCHAR(20) DEFAULT 'PENDING', -- PENDING, PROCESSING, COMPLETED, FAILED
+    Status NVARCHAR(20) DEFAULT 'PENDING',
     CreatedAt DATETIME2 DEFAULT GETDATE(),
     ProcessedAt DATETIME2 NULL
 );
-GO
 
 -- SQL Agent job processes queue every minute
 -- This decouples API calls from main transaction
+```
 
-/*******************************************************************************
-  MIGRATION GUIDE
-*******************************************************************************/
+---
 
--- From OLE Automation to SQL Server 2025
--- ───────────────────────────────────────
+##  Migration Guide
 
--- BEFORE (OLE Automation):
-/*
+### From OLE Automation to SQL Server 2025
+
+**BEFORE (OLE Automation):**
+```sql
 DECLARE @obj INT, @response VARCHAR(MAX);
 EXEC sp_OACreate 'MSXML2.ServerXMLHTTP', @obj OUT;
 EXEC sp_OAMethod @obj, 'open', NULL, 'GET', 'https://api.example.com/data', false;
 EXEC sp_OAMethod @obj, 'send';
 EXEC sp_OAGetProperty @obj, 'responseText', @response OUT;
 EXEC sp_OADestroy @obj;
-*/
+```
 
--- AFTER (SQL Server 2025):
+**AFTER (SQL Server 2025):**
+```sql
 DECLARE @response NVARCHAR(MAX);
 EXEC sp_invoke_external_rest_endpoint
     @url = 'https://api.example.com/data',
     @method = 'GET',
     @response = @response OUTPUT;
+```
 
--- From PowerShell to SQL Server 2025
--- ───────────────────────────────────
+### From PowerShell to SQL Server 2025
 
--- BEFORE (PowerShell):
-/*
+**BEFORE (PowerShell):**
+```sql
 DECLARE @ps NVARCHAR(MAX) = 
     'powershell -Command "Invoke-RestMethod -Uri ''https://api.example.com/data'' -Method Get | ConvertTo-Json"';
 EXEC xp_cmdshell @ps;
-*/
+```
 
--- AFTER (SQL Server 2025):
+**AFTER (SQL Server 2025):**
+```sql
 DECLARE @response NVARCHAR(MAX);
 EXEC sp_invoke_external_rest_endpoint
     @url = 'https://api.example.com/data',
     @method = 'GET',
     @response = @response OUTPUT;
+```
 
-/*******************************************************************************
-  SUMMARY AND FINAL RECOMMENDATIONS
-*******************************************************************************/
+---
 
-/*
-  TIER 1 (BEST CHOICES):
-────────────────────────
-1. SQL Server 2025: sp_invoke_external_rest_endpoint
-   → Use this for ALL new projects if available
-   → Migrate existing solutions to this when possible
+##  Summary and Final Recommendations
 
-2. SQL Agent with PowerShell
-   → Best for scheduled/recurring tasks
-   → Good security model
-   → Reliable and maintainable
+###  TIER 1 (BEST CHOICES)
 
-  TIER 2 (GOOD CHOICES):
-────────────────────────
-3. SQL CLR (C#)
-   → For high-performance scenarios
-   → When you need .NET libraries
-   → On-premises only
+#### 1. SQL Server 2025: `sp_invoke_external_rest_endpoint`
+-  Use this for **ALL new projects** if available
+-  Migrate existing solutions to this when possible
 
-4. External C# Application
-   → For microservices architecture
-   → When building modern systems
-   → Complex business logic
+#### 2. SQL Agent with PowerShell
+-  Best for scheduled/recurring tasks
+-  Good security model
+-  Reliable and maintainable
 
-  TIER 3 (USE WITH CAUTION):
-─────────────────────────────
-5. PowerShell via xp_cmdshell
-   → Quick prototyping only
-   → Disable immediately after use
-   → Not for production if alternatives exist
+---
 
-  TIER 4 (AVOID IF POSSIBLE):
-──────────────────────────────
-6. OLE Automation
-   → Legacy systems only
-   → Plan migration ASAP
-   → High security risk
+### 🥈 TIER 2 (GOOD CHOICES)
 
-═══════════════════════════════════════════════════════════════
+#### 3. SQL CLR (C#)
+- For high-performance scenarios
+- When you need .NET libraries
+- On-premises only
 
-THE GOLDEN RULE:
-If you have SQL Server 2025 or Azure SQL → Use sp_invoke_external_rest_endpoint
-If you don't → Consider upgrading, seriously!
+#### 4. External C# Application
+- For microservices architecture
+- When building modern systems
+- Complex business logic
 
-═══════════════════════════════════════════════════════════════
-*/
+---
+
+###  TIER 3 (USE WITH CAUTION)
+
+#### 5. PowerShell via `xp_cmdshell`
+- ⚠️ Quick prototyping only
+- ⚠️ Disable immediately after use
+- ⚠️ Not for production if alternatives exist
+
+---
+
+###  TIER 4 (AVOID IF POSSIBLE)
+
+#### 6. OLE Automation
+- ❌ Legacy systems only
+- ❌ Plan migration ASAP
+- ❌ High security risk
+
+---
+
+##  The Golden Rule
+
+> **If you have SQL Server 2025 or Azure SQL** → Use `sp_invoke_external_rest_endpoint`
+> 
+> **If you don't** → Consider upgrading, seriously!
+
+---
+
+##  Additional Resources
+
+- [Official Microsoft Documentation - sp_invoke_external_rest_endpoint](https://learn.microsoft.com/en-us/sql/relational-databases/system-stored-procedures/sp-invoke-external-rest-endpoint-transact-sql)
+- [SQL Server 2025 Release Notes](https://learn.microsoft.com/en-us/sql/sql-server/what-s-new-in-sql-server-2025)
+- [Azure SQL Database Documentation](https://learn.microsoft.com/en-us/azure/azure-sql/)
+
