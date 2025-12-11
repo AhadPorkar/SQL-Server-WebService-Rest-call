@@ -403,7 +403,7 @@ START: Need to call web service from SQL Server?
 
 ---
 
-## 🔒 Security Best Practices
+##  Security Best Practices
 
 ### 1. Credential Management
 
