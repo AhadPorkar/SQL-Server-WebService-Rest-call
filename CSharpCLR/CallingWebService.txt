@@ -1,4 +1,4 @@
- 
+ /*******************************************************************************
 -- Enable CLR Integration
 EXEC sp_configure 'show advanced options', 1;
 RECONFIGURE;
@@ -10,7 +10,7 @@ GO
 ALTER DATABASE [YourDatabaseName] SET TRUSTWORTHY ON;
 GO
 
-/*******************************************************************************
+
   Save this as "SQLWebServiceCaller.cs" and compile it
 *******************************************************************************/
  
