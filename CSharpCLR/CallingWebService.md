@@ -1,0 +1,767 @@
+ 
+-- Enable CLR Integration
+EXEC sp_configure 'show advanced options', 1;
+RECONFIGURE;
+EXEC sp_configure 'clr enabled', 1;
+RECONFIGURE;
+GO
+
+-- Set database to trustworthy (or use signed assemblies for production)
+ALTER DATABASE [YourDatabaseName] SET TRUSTWORTHY ON;
+GO
+
+/*******************************************************************************
+  Save this as "SQLWebServiceCaller.cs" and compile it
+*******************************************************************************/
+ 
+using System;
+using System.Data.SqlTypes;
+using System.Net.Http;
+using System.Text;
+using System.Threading.Tasks;
+using Microsoft.SqlServer.Server;
+
+namespace SQLWebServiceCaller
+{
+    public class WebServiceCaller
+    {
+        /// <summary>
+        /// Makes a simple GET request to a REST API
+        /// </summary>
+        [SqlFunction(DataAccess = DataAccessKind.None)]
+        public static SqlString CallWebServiceGET(SqlString url)
+        {
+            if (url.IsNull)
+                return SqlString.Null;
+
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    client.Timeout = TimeSpan.FromSeconds(30);
+                    
+                    Task<string> task = client.GetStringAsync(url.Value);
+                    task.Wait();
+                    
+                    return new SqlString(task.Result);
+                }
+            }
+            catch (Exception ex)
+            {
+                return new SqlString($"Error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Makes a POST request with JSON body
+        /// </summary>
+        [SqlFunction(DataAccess = DataAccessKind.None)]
+        public static SqlString CallWebServicePOST(SqlString url, SqlString jsonBody)
+        {
+            if (url.IsNull)
+                return SqlString.Null;
+
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    client.Timeout = TimeSpan.FromSeconds(30);
+                    
+                    var content = new StringContent(
+                        jsonBody.IsNull ? "" : jsonBody.Value,
+                        Encoding.UTF8,
+                        "application/json"
+                    );
+                    
+                    Task<HttpResponseMessage> task = client.PostAsync(url.Value, content);
+                    task.Wait();
+                    
+                    Task<string> responseTask = task.Result.Content.ReadAsStringAsync();
+                    responseTask.Wait();
+                    
+                    return new SqlString(responseTask.Result);
+                }
+            }
+            catch (Exception ex)
+            {
+                return new SqlString($"Error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Makes an authenticated GET request with custom headers
+        /// </summary>
+        [SqlFunction(DataAccess = DataAccessKind.None)]
+        public static SqlString CallWebServiceAuthenticated(
+            SqlString url, 
+            SqlString authToken, 
+            SqlString authType)
+        {
+            if (url.IsNull)
+                return SqlString.Null;
+
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    client.Timeout = TimeSpan.FromSeconds(30);
+                    
+                    // Add authentication header
+                    if (!authToken.IsNull && !authType.IsNull)
+                    {
+                        client.DefaultRequestHeaders.Add(
+                            "Authorization", 
+                            $"{authType.Value} {authToken.Value}"
+                        );
+                    }
+                    
+                    client.DefaultRequestHeaders.Add("Accept", "application/json");
+                    
+                    Task<string> task = client.GetStringAsync(url.Value);
+                    task.Wait();
+                    
+                    return new SqlString(task.Result);
+                }
+            }
+            catch (Exception ex)
+            {
+                return new SqlString($"Error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Advanced method with full HTTP response details
+        /// Returns JSON with status code, headers, and body
+        /// </summary>
+        [SqlFunction(DataAccess = DataAccessKind.None)]
+        public static SqlString CallWebServiceAdvanced(
+            SqlString url,
+            SqlString method,
+            SqlString headers,
+            SqlString body)
+        {
+            if (url.IsNull || method.IsNull)
+                return SqlString.Null;
+
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    client.Timeout = TimeSpan.FromSeconds(30);
+                    
+                    // Parse and add custom headers if provided
+                    if (!headers.IsNull && !string.IsNullOrWhiteSpace(headers.Value))
+                    {
+                        // Headers should be in format: "Header1:Value1|Header2:Value2"
+                        string[] headerPairs = headers.Value.Split('|');
+                        foreach (string pair in headerPairs)
+                        {
+                            string[] keyValue = pair.Split(':');
+                            if (keyValue.Length == 2)
+                            {
+                                client.DefaultRequestHeaders.Add(
+                                    keyValue[0].Trim(), 
+                                    keyValue[1].Trim()
+                                );
+                            }
+                        }
+                    }
+                    
+                    // Create request message
+                    HttpRequestMessage request = new HttpRequestMessage(
+                        new HttpMethod(method.Value.ToUpper()),
+                        url.Value
+                    );
+                    
+                    // Add body for POST/PUT/PATCH
+                    if (!body.IsNull && !string.IsNullOrWhiteSpace(body.Value))
+                    {
+                        request.Content = new StringContent(
+                            body.Value,
+                            Encoding.UTF8,
+                            "application/json"
+                        );
+                    }
+                    
+                    // Send request
+                    Task<HttpResponseMessage> task = client.SendAsync(request);
+                    task.Wait();
+                    
+                    HttpResponseMessage response = task.Result;
+                    
+                    // Read response content
+                    Task<string> contentTask = response.Content.ReadAsStringAsync();
+                    contentTask.Wait();
+                    
+                    // Build result JSON
+                    StringBuilder result = new StringBuilder();
+                    result.Append("{");
+                    result.AppendFormat("\"statusCode\":{0},", (int)response.StatusCode);
+                    result.AppendFormat("\"statusDescription\":\"{0}\",", response.ReasonPhrase);
+                    result.AppendFormat("\"isSuccess\":{0},", 
+                        response.IsSuccessStatusCode ? "true" : "false");
+                    
+                    // Escape content for JSON
+                    string content = contentTask.Result
+                        .Replace("\\", "\\\\")
+                        .Replace("\"", "\\\"")
+                        .Replace("\n", "\\n")
+                        .Replace("\r", "\\r");
+                    
+                    result.AppendFormat("\"content\":\"{0}\"", content);
+                    result.Append("}");
+                    
+                    return new SqlString(result.ToString());
+                }
+            }
+            catch (Exception ex)
+            {
+                return new SqlString($"{{\"error\":\"{ex.Message}\"}}");
+            }
+        }
+
+        /// <summary>
+        /// Async method with retry logic
+        /// </summary>
+        [SqlFunction(DataAccess = DataAccessKind.None)]
+        public static SqlString CallWebServiceWithRetry(
+            SqlString url,
+            SqlInt32 maxRetries,
+            SqlInt32 delayMs)
+        {
+            if (url.IsNull)
+                return SqlString.Null;
+
+            int retries = maxRetries.IsNull ? 3 : maxRetries.Value;
+            int delay = delayMs.IsNull ? 1000 : delayMs.Value;
+
+            for (int attempt = 0; attempt < retries; attempt++)
+            {
+                try
+                {
+                    using (HttpClient client = new HttpClient())
+                    {
+                        client.Timeout = TimeSpan.FromSeconds(30);
+                        
+                        Task<string> task = client.GetStringAsync(url.Value);
+                        task.Wait();
+                        
+                        return new SqlString(task.Result);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (attempt == retries - 1)
+                        return new SqlString($"Error after {retries} attempts: {ex.Message}");
+                    
+                    // Wait before retry
+                    Task.Delay(delay).Wait();
+                }
+            }
+            
+            return new SqlString("Unexpected error in retry logic");
+        }
+
+        /// <summary>
+        /// Download file from URL and return as binary data
+        /// </summary>
+        [SqlFunction(DataAccess = DataAccessKind.None)]
+        public static SqlBytes DownloadFile(SqlString url)
+        {
+            if (url.IsNull)
+                return SqlBytes.Null;
+
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    client.Timeout = TimeSpan.FromMinutes(5);
+                    
+                    Task<byte[]> task = client.GetByteArrayAsync(url.Value);
+                    task.Wait();
+                    
+                    return new SqlBytes(task.Result);
+                }
+            }
+            catch
+            {
+                return SqlBytes.Null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Table-valued function to call API and return multiple rows
+    /// </summary>
+    public class WebServiceTableCaller
+    {
+        [SqlFunction(
+            FillRowMethodName = "FillRow",
+            TableDefinition = "ItemId INT, ItemName NVARCHAR(100), ItemValue NVARCHAR(MAX)"
+        )]
+        public static System.Collections.IEnumerable CallAPIAndParseToTable(SqlString url)
+        {
+            // This is a simplified example
+            // In real scenario, you'd parse JSON response and yield rows
+            System.Collections.Generic.List<ApiItem> items = 
+                new System.Collections.Generic.List<ApiItem>();
+            
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    Task<string> task = client.GetStringAsync(url.Value);
+                    task.Wait();
+                    
+                    // Simplified: return dummy data
+                    // In production, parse JSON response here
+                    items.Add(new ApiItem { Id = 1, Name = "Item1", Value = "Value1" });
+                    items.Add(new ApiItem { Id = 2, Name = "Item2", Value = "Value2" });
+                }
+            }
+            catch (Exception ex)
+            {
+                items.Add(new ApiItem { Id = -1, Name = "Error", Value = ex.Message });
+            }
+            
+            return items;
+        }
+
+        public static void FillRow(
+            object obj,
+            out SqlInt32 id,
+            out SqlString name,
+            out SqlString value)
+        {
+            ApiItem item = (ApiItem)obj;
+            id = new SqlInt32(item.Id);
+            name = new SqlString(item.Name);
+            value = new SqlString(item.Value);
+        }
+
+        private class ApiItem
+        {
+            public int Id { get; set; }
+            public string Name { get; set; }
+            public string Value { get; set; }
+        }
+    }
+}
+*/
+
+/*******************************************************************************
+  COMPILING THE C# CODE
+  
+  Instructions to compile the C# code into a DLL:
+*******************************************************************************/
+
+/*
+METHOD 1: Using Visual Studio
+-------------------------------
+1. Create a new "Class Library (.NET Framework)" project
+2. Target .NET Framework 4.8 (or whatever your SQL Server supports)
+3. Add reference to System.Data and System.Net.Http
+4. Copy the C# code above
+5. Build the project
+6. The DLL will be in bin\Debug or bin\Release folder
+
+METHOD 2: Using Command Line (csc.exe)
+---------------------------------------
+Create a batch file (compile.bat):
+
+@echo off
+set FrameworkDir=C:\Windows\Microsoft.NET\Framework64\v4.0.30319
+set OutputDir=C:\SQLAssemblies
+
+if not exist "%OutputDir%" mkdir "%OutputDir%"
+
+"%FrameworkDir%\csc.exe" /target:library ^
+    /out:"%OutputDir%\SQLWebServiceCaller.dll" ^
+    /reference:System.Data.dll ^
+    /reference:System.Net.Http.dll ^
+    SQLWebServiceCaller.cs
+
+if %ERRORLEVEL% EQU 0 (
+    echo Compilation successful!
+    echo DLL location: %OutputDir%\SQLWebServiceCaller.dll
+) else (
+    echo Compilation failed!
+)
+
+Then run: compile.bat
+*/
+
+/*******************************************************************************
+  REGISTERING THE ASSEMBLY IN SQL SERVER
+*******************************************************************************/
+
+-- Drop existing assembly if it exists
+IF EXISTS (SELECT * FROM sys.assemblies WHERE name = 'SQLWebServiceCaller')
+    DROP ASSEMBLY SQLWebServiceCaller;
+GO
+
+-- Create the assembly from the DLL
+CREATE ASSEMBLY SQLWebServiceCaller
+FROM 'C:\SQLAssemblies\SQLWebServiceCaller.dll'
+WITH PERMISSION_SET = EXTERNAL_ACCESS;  -- Or UNSAFE if needed
+GO
+
+/*******************************************************************************
+  CREATING SQL FUNCTIONS FROM THE ASSEMBLY
+*******************************************************************************/
+
+-- Simple GET function
+CREATE FUNCTION dbo.fn_CallWebServiceGET(@url NVARCHAR(MAX))
+RETURNS NVARCHAR(MAX)
+AS EXTERNAL NAME SQLWebServiceCaller.[SQLWebServiceCaller.WebServiceCaller].CallWebServiceGET;
+GO
+
+-- POST function
+CREATE FUNCTION dbo.fn_CallWebServicePOST(
+    @url NVARCHAR(MAX),
+    @jsonBody NVARCHAR(MAX)
+)
+RETURNS NVARCHAR(MAX)
+AS EXTERNAL NAME SQLWebServiceCaller.[SQLWebServiceCaller.WebServiceCaller].CallWebServicePOST;
+GO
+
+-- Authenticated GET function
+CREATE FUNCTION dbo.fn_CallWebServiceAuthenticated(
+    @url NVARCHAR(MAX),
+    @authToken NVARCHAR(MAX),
+    @authType NVARCHAR(50)
+)
+RETURNS NVARCHAR(MAX)
+AS EXTERNAL NAME SQLWebServiceCaller.[SQLWebServiceCaller.WebServiceCaller].CallWebServiceAuthenticated;
+GO
+
+-- Advanced function with full control
+CREATE FUNCTION dbo.fn_CallWebServiceAdvanced(
+    @url NVARCHAR(MAX),
+    @method NVARCHAR(10),
+    @headers NVARCHAR(MAX),
+    @body NVARCHAR(MAX)
+)
+RETURNS NVARCHAR(MAX)
+AS EXTERNAL NAME SQLWebServiceCaller.[SQLWebServiceCaller.WebServiceCaller].CallWebServiceAdvanced;
+GO
+
+-- Function with retry logic
+CREATE FUNCTION dbo.fn_CallWebServiceWithRetry(
+    @url NVARCHAR(MAX),
+    @maxRetries INT,
+    @delayMs INT
+)
+RETURNS NVARCHAR(MAX)
+AS EXTERNAL NAME SQLWebServiceCaller.[SQLWebServiceCaller.WebServiceCaller].CallWebServiceWithRetry;
+GO
+
+-- File download function
+CREATE FUNCTION dbo.fn_DownloadFile(@url NVARCHAR(MAX))
+RETURNS VARBINARY(MAX)
+AS EXTERNAL NAME SQLWebServiceCaller.[SQLWebServiceCaller.WebServiceCaller].DownloadFile;
+GO
+
+-- Table-valued function
+CREATE FUNCTION dbo.fn_CallAPIAndParseToTable(@url NVARCHAR(MAX))
+RETURNS TABLE (
+    ItemId INT,
+    ItemName NVARCHAR(100),
+    ItemValue NVARCHAR(MAX)
+)
+AS EXTERNAL NAME SQLWebServiceCaller.[SQLWebServiceCaller.WebServiceTableCaller].CallAPIAndParseToTable;
+GO
+
+/*******************************************************************************
+  USING THE CLR FUNCTIONS IN SQL
+*******************************************************************************/
+
+-- Example 1: Simple GET request
+DECLARE @response NVARCHAR(MAX);
+SET @response = dbo.fn_CallWebServiceGET('https://api.publicapis.org/random');
+SELECT @response AS ApiResponse;
+
+-- Parse JSON response
+SELECT 
+    JSON_VALUE(@response, '$.count') AS Count,
+    JSON_QUERY(@response, '$.entries[0]') AS FirstEntry;
+GO
+
+-- Example 2: POST request
+DECLARE @jsonPayload NVARCHAR(MAX) = '{"name":"test","value":"123"}';
+DECLARE @response NVARCHAR(MAX);
+
+SET @response = dbo.fn_CallWebServicePOST(
+    'https://httpbin.org/post',
+    @jsonPayload
+);
+
+SELECT @response AS PostResponse;
+GO
+
+-- Example 3: Authenticated request
+DECLARE @response NVARCHAR(MAX);
+SET @response = dbo.fn_CallWebServiceAuthenticated(
+    'https://api.github.com/user',
+    'your_personal_access_token',
+    'Bearer'
+);
+SELECT @response AS AuthenticatedResponse;
+GO
+
+-- Example 4: Advanced request with custom headers
+DECLARE @response NVARCHAR(MAX);
+DECLARE @headers NVARCHAR(MAX) = 'Accept:application/json|User-Agent:SQLServer';
+
+SET @response = dbo.fn_CallWebServiceAdvanced(
+    'https://api.publicapis.org/entries',
+    'GET',
+    @headers,
+    NULL
+);
+
+-- Parse the structured response
+SELECT 
+    JSON_VALUE(@response, '$.statusCode') AS StatusCode,
+    JSON_VALUE(@response, '$.statusDescription') AS StatusDescription,
+    JSON_VALUE(@response, '$.isSuccess') AS IsSuccess,
+    JSON_VALUE(@response, '$.content') AS Content;
+GO
+
+-- Example 5: Request with retry logic
+DECLARE @response NVARCHAR(MAX);
+SET @response = dbo.fn_CallWebServiceWithRetry(
+    'https://api.publicapis.org/random',
+    3,      -- Max retries
+    2000    -- Delay between retries (ms)
+);
+SELECT @response AS ResponseWithRetry;
+GO
+
+-- Example 6: Download binary file
+DECLARE @fileData VARBINARY(MAX);
+SET @fileData = dbo.fn_DownloadFile('https://httpbin.org/image/png');
+
+-- Save to file or process binary data
+SELECT 
+    DATALENGTH(@fileData) AS FileSizeBytes,
+    @fileData AS FileData;
+GO
+
+-- Example 7: Table-valued function
+SELECT * FROM dbo.fn_CallAPIAndParseToTable('https://api.example.com/items');
+GO
+
+/*******************************************************************************
+  STORED PROCEDURES USING CLR FUNCTIONS
+*******************************************************************************/
+
+-- Procedure to fetch and store weather data
+CREATE OR ALTER PROCEDURE dbo.usp_FetchAndStoreWeatherData
+    @city NVARCHAR(100),
+    @apiKey NVARCHAR(255)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    DECLARE @url NVARCHAR(MAX);
+    DECLARE @response NVARCHAR(MAX);
+    
+    -- Build URL
+    SET @url = CONCAT(
+        'https://api.openweathermap.org/data/2.5/weather?q=',
+        @city,
+        '&appid=',
+        @apiKey,
+        '&units=metric'
+    );
+    
+    BEGIN TRY
+        -- Call API using CLR function
+        SET @response = dbo.fn_CallWebServiceGET(@url);
+        
+        -- Parse and store data
+        DECLARE @temp DECIMAL(5,2) = JSON_VALUE(@response, '$.main.temp');
+        DECLARE @humidity INT = JSON_VALUE(@response, '$.main.humidity');
+        DECLARE @description NVARCHAR(200) = JSON_VALUE(@response, '$.weather[0].description');
+        
+        -- Store in table (assuming WeatherData table exists)
+        INSERT INTO WeatherData (City, Temperature, Humidity, Description)
+        VALUES (@city, @temp, @humidity, @description);
+        
+        SELECT 'Success' AS Status, @city AS City, @temp AS Temperature;
+        
+    END TRY
+    BEGIN CATCH
+        SELECT 
+            'Error' AS Status,
+            ERROR_MESSAGE() AS ErrorMessage;
+    END CATCH
+END;
+GO
+
+-- Procedure to call multiple APIs and aggregate results
+CREATE OR ALTER PROCEDURE dbo.usp_FetchMultipleAPIs
+    @urls NVARCHAR(MAX)  -- Comma-separated URLs
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    -- Split URLs and call each one
+    DECLARE @url NVARCHAR(MAX);
+    DECLARE @response NVARCHAR(MAX);
+    
+    CREATE TABLE #Results (
+        ID INT IDENTITY(1,1),
+        URL NVARCHAR(500),
+        Response NVARCHAR(MAX),
+        FetchedAt DATETIME2 DEFAULT GETDATE()
+    );
+    
+    -- Split and process each URL
+    DECLARE @pos INT;
+    SET @urls = @urls + ',';
+    
+    WHILE CHARINDEX(',', @urls) > 0
+    BEGIN
+        SET @pos = CHARINDEX(',', @urls);
+        SET @url = LTRIM(RTRIM(SUBSTRING(@urls, 1, @pos - 1)));
+        SET @urls = SUBSTRING(@urls, @pos + 1, LEN(@urls));
+        
+        IF @url <> ''
+        BEGIN
+            BEGIN TRY
+                SET @response = dbo.fn_CallWebServiceGET(@url);
+                INSERT INTO #Results (URL, Response) VALUES (@url, @response);
+            END TRY
+            BEGIN CATCH
+                INSERT INTO #Results (URL, Response) 
+                VALUES (@url, 'Error: ' + ERROR_MESSAGE());
+            END CATCH
+        END
+    END
+    
+    -- Return all results
+    SELECT * FROM #Results;
+    
+    DROP TABLE #Results;
+END;
+GO
+
+/*******************************************************************************
+  ALTERNATIVE: EXTERNAL C# APPLICATION
+  
+  Instead of CLR, you can create a standalone C# application that SQL Server
+  calls via xp_cmdshell or SQL Agent
+*******************************************************************************/
+
+/*
+// WebServiceCaller.exe - Standalone console application
+
+using System;
+using System.Net.Http;
+using System.Text;
+using System.Threading.Tasks;
+using System.Data.SqlClient;
+
+namespace WebServiceCaller
+{
+    class Program
+    {
+        static async Task Main(string[] args)
+        {
+            if (args.Length < 2)
+            {
+                Console.WriteLine("Usage: WebServiceCaller.exe <url> <method> [body] [connection_string]");
+                return;
+            }
+
+            string url = args[0];
+            string method = args[1].ToUpper();
+            string body = args.Length > 2 ? args[2] : null;
+            string connectionString = args.Length > 3 ? args[3] : 
+                "Server=localhost;Database=YourDB;Integrated Security=true;";
+
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    HttpResponseMessage response;
+                    
+                    if (method == "POST" && !string.IsNullOrEmpty(body))
+                    {
+                        var content = new StringContent(body, Encoding.UTF8, "application/json");
+                        response = await client.PostAsync(url, content);
+                    }
+                    else
+                    {
+                        response = await client.GetAsync(url);
+                    }
+
+                    string responseBody = await response.Content.ReadAsStringAsync();
+                    int statusCode = (int)response.StatusCode;
+
+                    // Store in SQL Server
+                    using (SqlConnection conn = new SqlConnection(connectionString))
+                    {
+                        await conn.OpenAsync();
+                        
+                        string query = @"
+                            INSERT INTO APICallResults 
+                            (APIUrl, StatusCode, ResponseData, Success)
+                            VALUES (@Url, @StatusCode, @Response, @Success)";
+                        
+                        using (SqlCommand cmd = new SqlCommand(query, conn))
+                        {
+                            cmd.Parameters.AddWithValue("@Url", url);
+                            cmd.Parameters.AddWithValue("@StatusCode", statusCode);
+                            cmd.Parameters.AddWithValue("@Response", responseBody);
+                            cmd.Parameters.AddWithValue("@Success", response.IsSuccessStatusCode);
+                            
+                            await cmd.ExecuteNonQueryAsync();
+                        }
+                    }
+
+                    Console.WriteLine($"Success: {statusCode}");
+                    Console.WriteLine(responseBody);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
+                Environment.Exit(1);
+            }
+        }
+    }
+}
+*/
+
+-- Call the external C# application from SQL Server
+CREATE OR ALTER PROCEDURE dbo.usp_CallExternalApp
+    @url NVARCHAR(MAX),
+    @method NVARCHAR(10) = 'GET',
+    @body NVARCHAR(MAX) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    DECLARE @command NVARCHAR(4000);
+    DECLARE @result TABLE (line NVARCHAR(MAX));
+    
+    -- Build command
+    SET @command = '"C:\Apps\WebServiceCaller.exe" "' + @url + '" "' + @method + '"';
+    
+    IF @body IS NOT NULL
+        SET @command = @command + ' "' + REPLACE(@body, '"', '\"') + '"';
+    
+    -- Execute external application
+    INSERT INTO @result
+    EXEC xp_cmdshell @command;
+    
+    -- Return results
+    SELECT line FROM @result WHERE line IS NOT NULL;
+END;
+GO
+
+ 
+ 
