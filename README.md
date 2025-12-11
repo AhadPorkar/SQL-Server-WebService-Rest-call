@@ -27,7 +27,7 @@
 
 ---
 
-## 📊 Method Comparison Matrix
+##  Method Comparison Matrix
 
 | Method | SQL Version | Setup Complexity | Performance | Security Risk | Recommended Use Case |
 |--------|-------------|------------------|-------------|---------------|---------------------|
